@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+
+# Bun
+.bun/
+
+# Build / compile
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Environment and secrets (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+credentials.json
+secrets.yaml
+*.secret
+
+# Logs and debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test and coverage
+coverage/
+.nyc_output/
+.vitest/
+
+# Caches
+.turbo/
+.cache/
+.eslintcache
+.mikro-orm-cache/
+tmp/
+temp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors (machine-local)
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker local data (if ever bind-mounted into the tree)
+docker-data/
+.docker/
+
+# Local agent plans (harness docs in repo; implementation plans stay local)
+docs/superpowers/
+.superpowers/
