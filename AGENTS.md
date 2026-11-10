@@ -24,13 +24,13 @@ Repository map for coding agents. Keep this file concise. Architectural decision
 ## Commands
 
 Bootstrap:
-not configured
+`bun install && docker compose up -d postgres ministack && bun run migrate && bun run queues`
 
 Fast validation:
-not configured
+`bun run typecheck && bun run test:unit`
 
 Full test suite:
-not configured
+`bun test`
 
 Load test (optional):
 `bun run test:load` when present
@@ -45,7 +45,7 @@ Load test (optional):
 - PostgreSQL holds committed balances and outcomes. SQS FIFO ordering and broker deduplication are optimizations.
 - `OPENING` is internal only. `LOSS`, `REJECTED`, and `FAILED` do not move balance and do not write ledger. `REFUND` / `ROLLBACK` require the same provider, player, wallet, currency, and round, and reverse at most once at an equal amount.
 - Terminal transaction statuses (`PROCESSED`, `REJECTED`, `FAILED`) do not transition further.
-- Health endpoints are unauthenticated. Queue messages are an internal channel. `providerId` in the payload is a wager field and is checked against the wallet and the round. The auth guard is a separate port.
+- Health endpoints are unauthenticated. Queue messages are an internal channel. `providerId` in the payload is a wager field. Submit checks `playerId` against the wallet and `providerId` against the reference together with player, wallet, currency, and round. The auth guard is a separate port.
 
 ## Context routing
 

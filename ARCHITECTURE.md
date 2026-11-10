@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned. No runtime in the tree yet. The decisions below are binding for the build.
+Implemented. The decisions below remain binding.
 
 ## Purpose
 
@@ -14,6 +14,10 @@ PostgreSQL is the source of truth for committed balances and outcomes. SQS FIFO 
 
 ```
 src/
+  main.ts         process entry
+  app.ts          Nest wiring
+  config.ts       environment
+  observability.ts  registry and JSON log line
   wagering/       Money, Wallet, ledger, inbox, outbox, events, submit
   persistence/    MikroORM, migrations, the atomic write
   messaging/      SQS consumer, outbox publisher, pending-reference worker
@@ -131,6 +135,8 @@ Schema guarantees:
 
 A unique-violation on the reversal index becomes `REFERENCE_ALREADY_REVERSED` when the other commit won. A unique-violation on the idempotency key re-reads the stored row and either replays or returns a payload conflict. A unique-violation on `(provider_id, external_transaction_id)` with a different key leaves the stored row unchanged and returns `DUPLICATE_EXTERNAL_TRANSACTION`. A unique-violation on `(consumer_name, message_id)` re-reads the inbox row in that transaction. The same raw-body hash returns the stored wager outcome and applies nothing else. A different hash leaves the inbox row and the wager unchanged.
 
+PostgreSQL aborts a transaction on a unique violation. Each financial write therefore runs inside a savepoint. On a violation the savepoint rolls back, the wallet lock stays, and submit re-runs its checks once in the same transaction. Writes use `insert` and `nativeUpdate` so no unit-of-work state outlives that rollback. The publisher keeps the outbox `SKIP LOCKED` claim transaction open while it sends, then marks published or schedules retry in that same transaction.
+
 ## Concurrency
 
 The lock scope is `walletId`. `LockMode.PESSIMISTIC_WRITE` on the wallet row serializes debits and credits for that player. Wallets do not share a lock, a mutex, or an advisory lock.
@@ -194,6 +200,8 @@ Ledger pagination is a keyset cursor on `(created_at, id)`, opaque and stable. R
 
 `IDEMPOTENCY_PAYLOAD_CONFLICT`, `DUPLICATE_EXTERNAL_TRANSACTION`, and `DUPLICATE_WALLET` are HTTP conflicts. They are not transaction statuses. `DUPLICATE_WALLET` exists only on `POST /wallets`. On SQS, a payload conflict or a duplicate external transaction is acknowledged and leaves the stored wager unchanged.
 
+`OPENING_NOT_ACCEPTED` is a validation error (`400` on HTTP, DLQ on SQS). It is not stored as `failureCode` on a wager row.
+
 ## Pending references
 
 A scheduled worker claims due `PENDING_REFERENCE` rows with `FOR UPDATE SKIP LOCKED` and resumes that row. It does not open a second submit and does not allocate another idempotency key. After a miss, the next wait is 1s and doubles on each later miss, capped at 60s. The 12th miss rejects. Those waits are 1+2+4+8+16+32+60+60+60+60+60 seconds, about 6 minutes from the first try to rejection. That covers reordering and a short provider lag. A reference that never arrives is a provider fault, not an open hold. On exhaustion the status becomes `REJECTED` with `REFERENCE_NOT_FOUND`, and `WagerTransactionRejected` is enqueued in that same transaction. A missing reference keeps waiting. Kind or scope mismatch, a reversal whose amount differs, or a reference already `REJECTED` or `FAILED`, is rejected on that attempt. A `WIN` amount is not compared with the bet. A reference that is still `PENDING_REFERENCE` stays waiting.
@@ -235,7 +243,30 @@ The publisher polls every 500ms, claims up to 20 due rows with `FOR UPDATE SKIP 
 
 This service does not store users or password hashes. The intended edge is an external OIDC provider (Keycloak or Zitadel): bearer JWT, checked by a guard, with provider identity separate from `playerId`.
 
-The Nest root binds a no-op `AuthGuard` that satisfies `ProviderIdentity`. Keycloak and Zitadel are not in Compose. Health and `GET /metrics` stay public. SQS is a trusted internal channel. `providerId` in the payload is a wager field: submit checks it against the wallet and the reference scope. That check is not `ProviderIdentity`.
+The Nest root binds a no-op `AuthGuard` that satisfies `ProviderIdentity`. Keycloak and Zitadel are not in Compose. Health and `GET /metrics` stay public. SQS is a trusted internal channel. `providerId` in the payload is a wager field. A wallet has no provider. Submit checks `playerId` against the wallet, and `providerId` together with player, wallet, currency, and round against the reference. That check is not `ProviderIdentity`.
+
+## Interpretations
+
+Harness points that `docs/CHALLENGE.md` leaves open. The implementation follows these; they are not repeated elsewhere in this file.
+
+| Point | Interpretation implemented |
+|---|---|
+| I1 | `providerId` "checked against the wallet" | A wallet has no provider. Submit checks the payload `playerId` against the wallet and `providerId`, player, wallet, currency, and round against the reference. |
+| I2 | Payload `playerId` differs from the wallet owner | `REJECTED` with `WALLET_NOT_FOUND`: no wallet with that id belongs to that player. No new code. |
+| I3 | Currency appears in both `CURRENCY_MISMATCH` and `REFERENCE_SCOPE_MISMATCH` | Currency is compared first, against the wallet and then against the reference, and always yields `CURRENCY_MISMATCH`. Scope covers provider, player, wallet, and round. |
+| I4 | `OPENING_NOT_ACCEPTED` is listed as a failure code, but `OPENING` "is created only inside wallet opening" and an `OPENING` row has null provider ids | A submitted `OPENING` is a validation error: HTTP `400` with `OPENING_NOT_ACCEPTED`, SQS sends it to the DLQ. No row is stored. |
+| I5 | `observedBalance` when there is no readable wallet | `null` for `WALLET_NOT_FOUND` and `FAILED`. The HTTP `balance` and the event `balance` are `null` then. |
+| I6 | `WALLET_NOT_FOUND` rows name a wallet that does not exist | `wager_transactions.wallet_id` and `outbox_messages.aggregate_id` are `text` without a foreign key. A non-UUID id is an unknown id. |
+| I7 | Amount bounds | Every kind except `LOSS` needs an amount above zero (`LOSS` may be `0.00`). Initial balance may be zero. At most 17 integer digits, so every amount fits `numeric(19,2)`. A credit that would overflow the column is an unexpected error. |
+| I8 | Caller id bounds | Caller ids and the idempotency key are 1–255 characters. The body `messageId` is 1–128 printable ASCII characters, which is the SQS deduplication-id limit. A FIFO group id that is not a valid SQS id is replaced by its SHA-256 hex. |
+| I9 | HTTP bodies the table leaves open | Validation `400` bodies carry `code` (`INVALID_PAYLOAD`, `INVALID_MONEY`, `IDEMPOTENCY_KEY_REQUIRED`, `OPENING_NOT_ACCEPTED`) and `field`. Outcome bodies also carry `failureCode`. `404` is `NOT_FOUND`, `503` is `SERVICE_UNAVAILABLE` with `Retry-After: 1`, and an unexpected error with nothing stored is `500` `INTERNAL_ERROR`. `GET /health/ready` is `503` when not ready. |
+| I10 | "re-reads in that transaction" after a unique violation | PostgreSQL aborts a transaction on a violation. Each write therefore runs inside a savepoint. On a violation the savepoint rolls back, the wallet lock stays, and submit re-runs its checks once in the same transaction. The check order is: lock wallet, inbox, idempotency key, provider transaction id, wallet, player, currency, reference, balance. |
+| I11 | Pending-reference claim | The submit insert is miss 1, so the next attempt is 1s later. The worker reads due rows, then for each one locks the wallet and claims that row with `FOR UPDATE SKIP LOCKED`, re-checking status and `next_attempt_at`. A resumed decision uses the transaction id as `correlationId`. |
+| I12 | SQS error that is neither business nor transient | The message is left in place. Redrive sends it to the DLQ after `maxReceiveCount` 5. A shutdown release also counts as a receive. |
+| I13 | Log lines | Two more `msg` values: `wager.resumed` (a worker decision) and `error` (an unexpected failure). An `error` line carries the error class and SQLSTATE only, never the message, because PostgreSQL error details contain row values. |
+| I14 | Configuration | Also `PORT` (3000), `PENDING_REFERENCE_MAX_MISSES` (12), and `BACKOFF_CAP_SECONDS` (60). Tests pass a `Config` object. |
+| I15 | Outbox claim | The publisher keeps the `SKIP LOCKED` claim transaction open while it sends. It marks each row published, or schedules its retry, in that same transaction. |
+| I16 | System map | Root files: `main.ts` (process), `app.ts` (Nest wiring), `config.ts`, `observability.ts` (registry and log line shared by `http` and `messaging`). |
 
 ## Observability
 
@@ -243,7 +274,7 @@ The Nest root binds a no-op `AuthGuard` that satisfies `ProviderIdentity`. Keycl
 
 A line carries `correlationId` and, when the outcome has them, `transactionId`, `walletId`, `providerId`, `status`, and `failureCode`. `messageId` on a queue delivery is the body `messageId`. Lines omit the request body, money amounts, tokens, and secrets.
 
-`msg` is `wager.submitted`, `wallet.opened`, `reconciliation.mismatch`, `sqs.acknowledged`, `sqs.redelivered`, or `sqs.dlq`. `wager.submitted` includes `idempotentReplay`. `reconciliation.mismatch` is the non-zero reconciliation and carries `walletId` and `consistent: false`. The publisher does not log the event body. `sqs.redelivered` is the one line for an inbox hit with the same raw-body hash. `sqs.acknowledged` is the one line for an inbox hash mismatch, an idempotency payload conflict, or a duplicate external transaction on SQS. `sqs.dlq` is the one line when the body is sent to the DLQ. Those three lines are not paired with `wager.submitted`. An idempotent replay logs `wager.submitted`.
+`msg` is `wager.submitted`, `wager.resumed`, `wallet.opened`, `reconciliation.mismatch`, `sqs.acknowledged`, `sqs.redelivered`, `sqs.dlq`, or `error`. `wager.resumed` is a pending-reference worker decision. `error` is an unexpected failure and carries the error class and SQLSTATE only, never the PostgreSQL message. `wager.submitted` includes `idempotentReplay`. `reconciliation.mismatch` is the non-zero reconciliation and carries `walletId` and `consistent: false`. The publisher does not log the event body. `sqs.redelivered` is the one line for an inbox hit with the same raw-body hash. `sqs.acknowledged` is the one line for an inbox hash mismatch, an idempotency payload conflict, or a duplicate external transaction on SQS. `sqs.dlq` is the one line when the body is sent to the DLQ. Those three lines are not paired with `wager.submitted`. An idempotent replay logs `wager.submitted`.
 
 HTTP reads `X-Correlation-Id` or generates one. A queue delivery uses the body `messageId` as the `correlationId` on the log line and on the integration event.
 
@@ -251,11 +282,14 @@ The Nest root creates one `prom-client` registry and passes it to `http` and `me
 
 Generated ids (wallet, wager transaction, ledger entry, integration `eventId`) are UUID v7. `playerId`, `providerId`, and `externalTransactionId` stay caller-supplied opaque strings.
 
-Configuration is environment variables: `DATABASE_URL`, `SQS_ENDPOINT`, `SQS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `SQS_WAGER_QUEUE_URL`, `SQS_WAGER_DLQ_URL`, `SQS_EVENTS_QUEUE_URL`. Attempt limits and backoff caps have the defaults in this document and may be overridden the same way in tests.
+Configuration is environment variables: `DATABASE_URL`, `SQS_ENDPOINT`, `SQS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `SQS_WAGER_QUEUE_URL`, `SQS_WAGER_DLQ_URL`, `SQS_EVENTS_QUEUE_URL`, `PORT` (default 3000), `PENDING_REFERENCE_MAX_MISSES` (default 12), and `BACKOFF_CAP_SECONDS` (default 60). Attempt limits and backoff caps have the defaults in this document and may be overridden the same way in tests.
 
 ## Verification
 
-Commands are not configured yet. The suite that must exist:
+- `bun run typecheck` and `bun run test:unit`
+- `bun run test:integration` against PostgreSQL 16 and MiniStack
+- `bun run test:concurrency`
+- `bun test` for the full suite
 
 - unit tests for `Money`, wallet invariants, each kind, currency conflict, and idempotency payload conflict
 - integration tests against real PostgreSQL 16 and MiniStack: migrations, constraints, the atomic write, inbox redelivery, concurrent publishers, retry, DLQ, restart
