@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wagerflow
+      POSTGRES_PASSWORD: wagerflow
+      POSTGRES_DB: wagerflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "wagerflow"]
+      interval: 2s
+      retries: 30
+
+  ministack:
+    image: ministackorg/ministack
+    ports:
+      - "4566:4566"
+
+  app:
+    profiles: ["app"]
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ministack:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://wagerflow:wagerflow@postgres:5432/wagerflow
+      SQS_ENDPOINT: http://ministack:4566
+      SQS_WAGER_QUEUE_URL: http://ministack:4566/000000000000/wager-transactions.fifo
+      SQS_WAGER_DLQ_URL: http://ministack:4566/000000000000/wager-transactions-dlq.fifo
+      SQS_EVENTS_QUEUE_URL: http://ministack:4566/000000000000/integration-events.fifo
+    command: ["sh", "-c", "bun run migrate && bun run queues && bun run start"]
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres:
