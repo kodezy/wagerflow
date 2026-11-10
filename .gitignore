@@ -39,6 +39,7 @@ coverage/
 .cache/
 .eslintcache
 .mikro-orm-cache/
+.snapshot-*.json
 tmp/
 temp/
 
