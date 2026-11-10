@@ -237,7 +237,7 @@ SQS redrive `maxReceiveCount` is 5. The DLQ send uses group id `walletId`, or `u
 
 `WagerTransactionProcessed`, `WagerTransactionRejected`, and `WagerTransactionPendingReference` carry `transactionId`, `walletId`, `playerId`, `kind`, `money`, `balance`, `providerId`, `externalTransactionId`, `roundId`, `gameId`, and `referenceExternalTransactionId`. `money` is `MoneyProps`. `balance` is the `observedBalance` written in that commit. An identifier the row does not have is `null`. `WagerTransactionRejected` also carries `failureCode`.
 
-The publisher polls every 500ms, claims up to 20 due rows with `FOR UPDATE SKIP LOCKED`, and sends each body to `integration-events.fifo`. Message group id is `aggregateId`. Deduplication id is `eventId`. Content-based deduplication stays off. Crash after commit and before publish leaves `published_at` null; another instance publishes. Crash after publish and before the mark causes one duplicate delivery with the same `eventId`. Downstream consumers dedupe on `eventId`. `scheduleRetry` increments `attempts` and sets `nextAttemptAt` from 1s, doubling, capped at 60s. There is no attempt ceiling. A committed event is retried until `published_at` is set.
+The publisher polls every 500ms, claims up to 20 due rows with `FOR UPDATE SKIP LOCKED`, and sends each body to `integration-events.fifo`. Message group id is `aggregateId`. The SQS deduplication id is `eventId` plus the publish attempt, so a retry after a crash-after-send is not dropped by the FIFO window. The envelope `eventId` does not change. Content-based deduplication stays off. Crash after commit and before publish leaves `published_at` null; another instance publishes. Crash after publish and before the mark causes one duplicate delivery of the same envelope `eventId`. Downstream consumers dedupe on `eventId`. `scheduleRetry` increments `attempts` and sets `nextAttemptAt` from 1s, doubling, capped at 60s. There is no attempt ceiling. A committed event is retried until `published_at` is set.
 
 ## Authentication
 
@@ -313,7 +313,7 @@ Every test ends at `wallet.balance == fold(ledger)`.
 | Currency | Model is multi-currency; runtime uses `BRL` | Cuts fixture scope. Conflict tests still cross currencies |
 | SQS emulator | MiniStack on port 4566 | Same SDK contract as AWS, small image, no license key. LocalStack stays unused |
 | Ingress | HTTP applies directly; SQS is a second ingress | Forwarding HTTP into the queue would apply the wager twice |
-| Outbox destination | `integration-events.fifo`, dedup id = `eventId` | One queue is enough. SNS fan-out is unnecessary. Republish stays safe |
+| Outbox destination | `integration-events.fifo`; envelope `eventId` is stable; the SQS dedup id also carries the attempt | One queue is enough. SNS fan-out is unnecessary. A retry is not swallowed, and the consumer still dedupes on `eventId` |
 | Identifiers | UUID v7 for ids this service mints | Time-ordered keys match the ledger cursor. Caller ids stay opaque strings |
 | Metrics | `prom-client` on `GET /metrics` | Covers the required counters without an OpenTelemetry stack |
 | Reference on `WIN` | Optional. Present and missing → `PENDING_REFERENCE`, and the target must be a `BET` | `BET` and `LOSS` reject the field. Reversals still require it |
