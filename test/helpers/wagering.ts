@@ -1,6 +1,8 @@
+import type { WagerOutcome } from "../../src/wagering/apply";
 import type { Clock } from "../../src/wagering/clock";
 import { OpenWallet } from "../../src/wagering/open";
 import { parseWagerRequest, parseWalletRequest, type WagerRequest } from "../../src/wagering/request";
+import type { SubmitResult } from "../../src/wagering/submit";
 import type { WageringStore } from "../../src/wagering/store";
 import type { Wallet } from "../../src/wagering/wallet";
 
@@ -43,4 +45,9 @@ export function wagerBody(wallet: WalletOwner, overrides: Record<string, unknown
 export function wagerRequest(wallet: WalletOwner, overrides: Record<string, unknown> = {}, idempotencyKey?: string): WagerRequest {
   const body = wagerBody(wallet, overrides);
   return parseWagerRequest(body, idempotencyKey ?? `${body.providerId}:${body.externalTransactionId}`);
+}
+
+export function expectOutcome(result: SubmitResult): WagerOutcome {
+  if (result.type !== "outcome") throw new Error(`expected an outcome, got ${result.type}`);
+  return result.outcome;
 }
