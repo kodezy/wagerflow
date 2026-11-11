@@ -32,6 +32,9 @@ Fast validation:
 Full test suite:
 `bun run test`
 
+CI (`push`):
+`typecheck` + `test:unit`; Compose `postgres` + `ministack`, then `test:integration` and `test:concurrency`
+
 Load test (optional):
 `bun run test:load` when present
 
