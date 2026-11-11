@@ -29,24 +29,24 @@ bun test
 bun run test:load          # optional; Docker, three processes, writes wagerflow_load unless LOAD_DATABASE_URL is set
 ```
 
-Every integration and concurrency test checks that each wallet balance equals its ledger fold. The load script is not part of `bun test`. It prints throughput, client latency, error rate, lock timeouts, and outbox lag. Method and one recorded run: `docs/LOAD.md`.
+Every integration and concurrency test checks that each wallet balance equals its ledger fold. Load testing is outside `bun test`; see `docs/LOAD.md`.
 
 ## API
 
-| Method | Path | Notes |
+| Method | Path | Description |
 |---|---|---|
-| POST | `/wallets` | `201`, or `409 DUPLICATE_WALLET` |
-| GET | `/wallets/:walletId` | `404 NOT_FOUND` |
-| GET | `/wallets/:walletId/ledger` | keyset cursor |
-| POST | `/wallets/:walletId/reconciliation` | never rewrites balances |
-| POST | `/wagering/transactions` | requires `Idempotency-Key` |
-| GET | `/wagering/transactions/:transactionId` | |
-| GET | `/providers/:providerId/wagering/transactions/:externalTransactionId` | |
-| GET | `/health/live` | unauthenticated |
-| GET | `/health/ready` | unauthenticated, PostgreSQL and SQS |
-| GET | `/metrics` | unauthenticated Prometheus text |
+| POST | `/wallets` | Open a wallet with an optional initial balance |
+| GET | `/wallets/:walletId` | Wallet balance and metadata |
+| GET | `/wallets/:walletId/ledger` | Ledger entries; opaque `cursor` and `limit` |
+| POST | `/wallets/:walletId/reconciliation` | Compare stored balance to the ledger fold (read-only) |
+| POST | `/wagering/transactions` | Submit a wager operation; requires `Idempotency-Key` |
+| GET | `/wagering/transactions/:transactionId` | Wager outcome by internal transaction id |
+| GET | `/providers/:providerId/wagering/transactions/:externalTransactionId` | Wager outcome by provider and external id |
+| GET | `/health/live` | Process liveness |
+| GET | `/health/ready` | Readiness: PostgreSQL and SQS |
+| GET | `/metrics` | Prometheus text exposition |
 
-SQS ingress is `wager-transactions.fifo`. HTTP does not enqueue that request. Integration events go to `integration-events.fifo`.
+HTTP wager submit runs in-process. Producers may also send work on SQS (`wager-transactions.fifo`). Committed integration events publish to `integration-events.fifo`. Unknown wallet or wager returns `404 NOT_FOUND`. `POST /wallets` returns `409 DUPLICATE_WALLET` for the same `playerId` and currency. Health and metrics routes are unauthenticated.
 
 ## Layout
 
