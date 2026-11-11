@@ -1,4 +1,3 @@
-import type { Config } from "../config";
 import { logError, type Metrics } from "../observability";
 import type { Clock } from "../wagering/clock";
 import type { WageringStore } from "../wagering/store";
@@ -12,10 +11,6 @@ export class OutboxPublisher {
     private readonly clock: Clock,
     private readonly capSeconds: number,
   ) {}
-
-  static from(store: WageringStore, sqs: SqsGateway, metrics: Metrics, clock: Clock, config: Config): OutboxPublisher {
-    return new OutboxPublisher(store, sqs, metrics, clock, config.backoffCapSeconds);
-  }
 
   async publishDue(): Promise<number> {
     const now = this.clock.now();

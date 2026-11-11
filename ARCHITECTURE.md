@@ -225,7 +225,7 @@ The consumer long-polls up to 10 messages (wait 10s) and runs different wallets 
 | Transient (database down, lock timeout) | leave the message; visibility timeout is the backoff |
 | Body that cannot be parsed or stored | send to the DLQ, then acknowledge the source |
 
-SQS redrive `maxReceiveCount` is 5. The DLQ send uses group id `walletId`, or `unparsed` when the body has no wallet id, and `MessageDeduplicationId` equal to the body `messageId`, or the SQS `MessageId` when the body has none. On `SIGTERM` the process stops receiving, waits up to 20s for in-flight work, then sets visibility to 0 on anything still open.
+SQS redrive `maxReceiveCount` is 5. An explicit DLQ send (body that cannot be stored) uses the inbound `MessageGroupId`, or `unparsed` when that attribute is missing, and `MessageDeduplicationId` equal to the SQS `MessageId`. On `SIGTERM` the process stops receiving, waits up to 20s for in-flight work, then sets visibility to 0 on anything still open.
 
 ## Outbox
 
