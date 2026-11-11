@@ -1,6 +1,6 @@
 # Load experiment
 
-Optional. `bun run test:load` is not part of `bun test` and has no RPS target. Setup failures exit non-zero. After the workload, the script exits non-zero only when a money or outbox check fails.
+Optional. `bun run test:load` is not part of `bun run test` and has no RPS target. Setup failures exit non-zero. After the workload, the script exits non-zero only when a money or outbox check fails.
 
 ## Setup
 

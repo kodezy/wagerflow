@@ -30,7 +30,7 @@ Fast validation:
 `bun run typecheck && bun run test:unit`
 
 Full test suite:
-`bun test`
+`bun run test`
 
 Load test (optional):
 `bun run test:load` when present

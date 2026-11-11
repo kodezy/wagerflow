@@ -289,7 +289,7 @@ Configuration is environment variables: `DATABASE_URL`, `SQS_ENDPOINT`, `SQS_REG
 - `bun run typecheck` and `bun run test:unit`
 - `bun run test:integration` against PostgreSQL 16 and MiniStack
 - `bun run test:concurrency`
-- `bun test` for the full suite
+- `bun run test` for the full suite
 
 - unit tests for `Money`, wallet invariants, each kind, currency conflict, and idempotency payload conflict
 - integration tests against real PostgreSQL 16 and MiniStack: migrations, constraints, the atomic write, inbox redelivery, concurrent publishers, retry, DLQ, restart
