@@ -19,20 +19,20 @@ import { openWallet } from "../helpers/wagering";
 
 let orm: MikroORM;
 let store: PostgresWageringStore;
-let submit: SubmitWager;
 let sqs: SqsGateway;
 let eventsUrl: string;
 let dlqUrl: string;
+let wagerUrl: string;
 let metrics: Metrics;
 
 beforeAll(async () => {
   orm = await testOrm();
   store = new PostgresWageringStore(orm);
-  submit = new SubmitWager(store, systemClock);
   const setup = await testQueues();
   sqs = setup.sqs;
   eventsUrl = setup.queues.eventsQueueUrl;
   dlqUrl = setup.queues.wagerDlqUrl;
+  wagerUrl = setup.queues.wagerQueueUrl;
   metrics = new Metrics();
 });
 
@@ -40,6 +40,7 @@ beforeEach(async () => {
   await sql(orm, "delete from outbox_messages where published_at is null");
   await drainQueue(sqs, eventsUrl, 500);
   await drainQueue(sqs, dlqUrl, 300);
+  await drainQueue(sqs, wagerUrl, 300);
 }, 15_000);
 
 afterAll(async () => {
@@ -132,12 +133,15 @@ describe("WagerConsumer", () => {
     const target = consumer();
 
     await drain(target, wallet.id, body);
+    const duplicatesBefore = await duplicateTotal(metrics);
     await sqs.sendWager(body, wallet.id, Bun.randomUUIDv7());
     target.start();
-    await Bun.sleep(1500);
+    await waitFor(async () => ((await duplicateTotal(metrics)) > duplicatesBefore ? true : undefined), 15_000, "inbox replay");
     await target.stop();
 
     expect((await store.findWallet(wallet.id))?.balance.toJSON().amount).toBe("90.00");
+    expect(await debitCount(wallet.id)).toBe(1);
+    expect(await inboxCount(messageId)).toBe(1);
   });
 
   test("the same messageId with another body is acknowledged and changes nothing", async () => {
@@ -145,15 +149,30 @@ describe("WagerConsumer", () => {
     const messageId = Bun.randomUUIDv7();
     const first = requested(wallet, { money: { amount: "10.00", currency: "BRL" } }, messageId);
     const second = requested(wallet, { money: { amount: "11.00", currency: "BRL" } }, messageId);
-    const target = consumer();
+    let deleted = 0;
+    const counting = new Proxy(sqs, {
+      get(target, property, receiver) {
+        if (property === "delete") {
+          return async (receiptHandle: string) => {
+            deleted += 1;
+            return target.delete(receiptHandle);
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }) as SqsGateway;
+    const target = consumer(counting);
 
     await drain(target, wallet.id, first);
+    const afterFirst = deleted;
     await sqs.sendWager(second, wallet.id, Bun.randomUUIDv7());
     target.start();
-    await Bun.sleep(1500);
+    await waitFor(async () => (deleted > afterFirst ? true : undefined), 15_000, "inbox conflict ack");
     await target.stop();
 
     expect((await store.findWallet(wallet.id))?.balance.toJSON().amount).toBe("90.00");
+    expect(await debitCount(wallet.id)).toBe(1);
+    expect(await inboxCount(messageId)).toBe(1);
   });
 
   test("an unparsable body, OPENING, and a missing key go to the DLQ", async () => {
@@ -228,11 +247,12 @@ describe("WagerConsumer", () => {
 
     const returned = await sqs.receive();
     expect(returned.length).toBeGreaterThan(0);
+    for (const delivery of returned) await sqs.delete(delivery.receiptHandle);
   });
 });
 
 describe("OutboxPublisher", () => {
-  test("two publishers never claim the same row, and a throw after send republishes the same eventId", async () => {
+  test("a throw after send republishes the same eventId", async () => {
     const wallet = await openWallet(store, systemClock);
     await publishOpeningOutbox(sqs, eventsUrl, () => publisher().publishDue());
     const target = consumer();
@@ -255,9 +275,11 @@ describe("OutboxPublisher", () => {
     await publisher().publishDue();
     await publisher().publishDue();
 
-    const bodies = await receiveBodies(sqs, eventsUrl, 4);
-    const ids = bodies.map((body) => JSON.parse(body).eventId as string);
-    expect(new Set(ids).size).toBeLessThan(ids.length);
+    const ids: string[] = [];
+    await waitFor(async () => {
+      for (const body of await receiveBodies(sqs, eventsUrl, 1, 1_000)) ids.push(JSON.parse(body).eventId as string);
+      return ids.length > 0 && new Set(ids).size < ids.length ? true : undefined;
+    }, 20_000, "republished eventId");
   });
 });
 
