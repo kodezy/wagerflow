@@ -36,7 +36,7 @@ CI (`push`):
 `typecheck` + `test:unit`; Compose `postgres` + `ministack`, then `test:integration` and `test:concurrency`
 
 Load test (optional):
-`bun run test:load` when present
+`bun run test:load` — see `docs/LOAD.md`; not part of `bun run test`
 
 ## Core invariants
 

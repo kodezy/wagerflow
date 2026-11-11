@@ -290,6 +290,7 @@ Configuration is environment variables: `DATABASE_URL`, `SQS_ENDPOINT`, `SQS_REG
 - `bun run test:integration` against PostgreSQL 16 and MiniStack
 - `bun run test:concurrency`
 - `bun run test` for the full suite
+- On `push` to GitHub, Actions job `unit` runs typecheck and unit tests; job `proof` starts Compose `postgres` and `ministack`, then integration and concurrency (`.github/workflows/ci.yml`).
 
 - unit tests for `Money`, wallet invariants, each kind, currency conflict, and idempotency payload conflict
 - integration tests against real PostgreSQL 16 and MiniStack: migrations, constraints, the atomic write, inbox redelivery, concurrent publishers, retry, DLQ, restart
@@ -335,4 +336,4 @@ Every test ends at `wallet.balance == fold(ledger)`.
 
 ## Freshness
 
-Last updated: 2026-11-10
+Last updated: 2026-11-11

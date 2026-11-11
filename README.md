@@ -1,10 +1,17 @@
 # Wagerflow
 
-Distributed wagering processor. Game providers submit `BET`, `WIN`, `LOSS`, `REFUND`, and `ROLLBACK` over HTTP and SQS. PostgreSQL is the source of truth. Duplicate, out-of-order, and concurrent delivery must not double-credit, double-debit, drop a committed event, or produce a negative balance.
+Distributed wagering processor. Game providers submit `BET`, `WIN`, `LOSS`, `REFUND`, and `ROLLBACK` over HTTP and SQS.
+
+PostgreSQL is the source of truth. Duplicate, out-of-order, or concurrent delivery must not double-credit, double-debit, drop a committed event, or produce a negative balance.
 
 ## Stack
 
-Bun 1.4, TypeScript 6 strict, NestJS 12, MikroORM 7, PostgreSQL 16, MiniStack on port 4566.
+- Bun 1.4
+- TypeScript 6 (strict)
+- NestJS 12
+- MikroORM 7
+- PostgreSQL 16
+- MiniStack (port 4566)
 
 ## Run locally
 
@@ -16,40 +23,75 @@ bun run queues
 bun run start
 ```
 
-The API listens on `PORT` (default 3000). Copy `.env.example` if you need to override URLs.
+API on `PORT` (default 3000). Copy `.env.example` to override URLs.
 
 ## Tests
+
+Quick check:
 
 ```bash
 bun run typecheck
 bun run test:unit
-bun run test:integration   # real PostgreSQL and MiniStack
-bun run test:concurrency
-bun run test
-bun run test:load          # optional; Docker, three processes, writes wagerflow_load unless LOAD_DATABASE_URL is set
 ```
 
-Every integration and concurrency test checks that each wallet balance equals its ledger fold. `bun run test`, `test:integration`, and `test:concurrency` pass `--timeout 120000`; a bare `bun test` keeps Bun’s 5s default. Load testing is outside `bun run test`; see `docs/LOAD.md`.
+Full suite (PostgreSQL + MiniStack):
 
-**CI (GitHub Actions on push):** job `unit` runs `typecheck` and `test:unit`. Job `proof` starts Docker Compose `postgres` and `ministack`, then `test:integration` and `test:concurrency`.
+```bash
+bun run test
+```
+
+`bun run test` runs unit, integration, and concurrency with a 120s timeout. For one slice: `bun run test:integration` or `bun run test:concurrency`. Plain `bun test` keeps the 5s default.
+
+Integration and concurrency tests check wallet balance against the ledger.
+
+Optional load test (not in `bun run test`):
+
+```bash
+bun run test:load
+```
+
+**CI (push to GitHub)**
+
+- `unit` — Typecheck + unit tests
+- `proof` — Compose `postgres` + `ministack`, then integration + concurrency
 
 ## API
 
 | Method | Path | Description |
-|---|---|---|
-| POST | `/wallets` | Open a wallet with an optional initial balance |
-| GET | `/wallets/:walletId` | Wallet balance and metadata |
-| GET | `/wallets/:walletId/ledger` | Ledger entries; opaque `cursor` and `limit` |
-| POST | `/wallets/:walletId/reconciliation` | Compare stored balance to the ledger fold (read-only) |
-| POST | `/wagering/transactions` | Submit a wager operation; requires `Idempotency-Key` |
-| GET | `/wagering/transactions/:transactionId` | Wager outcome by internal transaction id |
-| GET | `/providers/:providerId/wagering/transactions/:externalTransactionId` | Wager outcome by provider and external id |
+| --- | --- | --- |
+| POST | `/wallets` | Create wallet; optional initial balance |
+| GET | `/wallets/:walletId` | Balance and metadata |
+| GET | `/wallets/:walletId/ledger` | Ledger; opaque `cursor` and `limit` |
+| POST | `/wallets/:walletId/reconciliation` | Stored balance vs ledger (read-only) |
+| POST | `/wagering/transactions` | Submit wager; needs `Idempotency-Key` |
+| GET | `/wagering/transactions/:transactionId` | Outcome by internal id |
+| GET | `/providers/:providerId/wagering/transactions/:externalTransactionId` | Outcome by provider and external id |
 | GET | `/health/live` | Process liveness |
-| GET | `/health/ready` | Readiness: PostgreSQL and SQS |
-| GET | `/metrics` | Prometheus text exposition |
+| GET | `/health/ready` | PostgreSQL and SQS reachable |
+| GET | `/metrics` | Prometheus |
 
-HTTP wager submit runs in-process. Producers may also send work on SQS (`wager-transactions.fifo`). Committed integration events publish to `integration-events.fifo`. Unknown wallet or wager returns `404 NOT_FOUND`. `POST /wallets` returns `409 DUPLICATE_WALLET` for the same `playerId` and currency. Health and metrics routes are unauthenticated.
+Submit over HTTP or `wager-transactions.fifo`. After commit, events go to `integration-events.fifo`. Permanent SQS failures go to `wager-transactions-dlq.fifo`.
 
-## Layout
+`404 NOT_FOUND` when the wallet or wager does not exist. `409 DUPLICATE_WALLET` when the same `playerId` and currency already have a wallet. Health and metrics are unauthenticated.
 
-`src/wagering` owns the rules. `src/persistence` implements `WageringStore`. `src/http` and `src/messaging` are the edges and the only modules that log or record metrics.
+Status codes and bodies: [ARCHITECTURE.md](ARCHITECTURE.md#http).
+
+## Architecture
+
+```
+src/
+  wagering/            Wager rules; HTTP and SQS share one submit path
+  persistence/         MikroORM `WageringStore` and migrations
+  http/                REST, idempotency header, provider guard
+  messaging/           Wager consumer, outbox publisher, pending-reference worker
+  main.ts              Process entrypoint
+  app.ts               Nest wiring; HTTP plus queue workers in one process
+  config.ts            Database, queues, and port from environment
+  observability.ts     Prometheus registry; JSON lines to stdout
+```
+
+## Docs
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — Design, idempotency, errors, messaging
+- [docs/CHALLENGE.md](docs/CHALLENGE.md) — Original requirements
+- [docs/LOAD.md](docs/LOAD.md) — Optional load test
