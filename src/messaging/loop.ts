@@ -1,9 +1,10 @@
+import { logError } from "../observability";
+
 export class Loop {
   private stopping?: AbortController;
   private running?: Promise<void>;
 
   constructor(
-    private readonly name: string,
     private readonly intervalMs: number,
     private readonly tick: (signal: AbortSignal) => Promise<void>,
   ) {}
@@ -26,8 +27,9 @@ export class Loop {
     while (!signal.aborted) {
       try {
         await this.tick(signal);
-      } catch {
+      } catch (error) {
         if (signal.aborted) return;
+        logError({}, error);
       }
 
       await Bun.sleep(this.intervalMs);

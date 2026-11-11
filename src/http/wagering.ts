@@ -7,7 +7,7 @@ import { QueryWagering } from "../wagering/query";
 import { parseWagerRequest } from "../wagering/request";
 import { TransientStoreError } from "../wagering/store";
 import { SubmitWager } from "../wagering/submit";
-import { correlationOf, outcomeBody, outcomeStatus, parseJson } from "./reply";
+import { correlationOf, outcomeStatus, parseJson } from "./reply";
 
 @Controller()
 export class WageringController {
@@ -37,10 +37,7 @@ export class WageringController {
         return { code: result.code, transactionId: result.transactionId };
       }
 
-      if (result.type !== "outcome" && result.type !== "inbox-replay") {
-        response.status(409);
-        return { code: "INBOX_PAYLOAD_CONFLICT" };
-      }
+      if (result.type !== "outcome") throw new Error(`unexpected submit result ${result.type}`);
 
       this.metrics.recordOutcome("http", result.outcome);
       logLine("wager.submitted", {
@@ -53,7 +50,7 @@ export class WageringController {
         idempotentReplay: result.outcome.idempotentReplay,
       });
       response.status(outcomeStatus(result.outcome));
-      return outcomeBody(result.outcome);
+      return result.outcome;
     } catch (error) {
       if (error instanceof TransientStoreError && error.reason === "lock_timeout") this.metrics.recordLockConflict("http");
       throw error;

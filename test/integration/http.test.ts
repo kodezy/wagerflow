@@ -53,9 +53,10 @@ describe("HTTP", () => {
       body: JSON.stringify({ playerId, initialBalance: { amount: "1.00", currency: "BRL" } }),
     });
     expect(duplicate).toMatchObject({ status: 409, body: { code: "DUPLICATE_WALLET" } });
+    const externalId = `tx-${Bun.randomUUIDv7()}`;
     const bet = {
       providerId: "provider-a",
-      externalTransactionId: "tx-1",
+      externalTransactionId: externalId,
       playerId,
       walletId,
       roundId: "round-1",
@@ -63,7 +64,7 @@ describe("HTTP", () => {
       kind: "BET",
       money: { amount: "25.00", currency: "BRL" },
     };
-    const headers = { "Idempotency-Key": "provider-a:tx-1", "X-Correlation-Id": "c-1" };
+    const headers = { "Idempotency-Key": `provider-a:${externalId}`, "X-Correlation-Id": "c-1" };
 
     const first = await json("/wagering/transactions", { method: "POST", headers, body: JSON.stringify(bet) });
     const replay = await json("/wagering/transactions", { method: "POST", headers, body: JSON.stringify(bet) });
@@ -109,19 +110,20 @@ describe("HTTP", () => {
     expect(await metrics.text()).toContain("wagerflow_transactions_total");
   });
 
-  test("WIN without a reference is 202 until the BET arrives", async () => {
+  test("WIN whose BET is not stored yet is 202", async () => {
     const opened = await json("/wallets", {
       method: "POST",
       body: JSON.stringify({ playerId: Bun.randomUUIDv7(), initialBalance: { amount: "10.00", currency: "BRL" } }),
     });
     const walletId = opened.body.id as string;
     const playerId = opened.body.playerId as string;
+    const winId = `win-${Bun.randomUUIDv7()}`;
     const win = await json("/wagering/transactions", {
       method: "POST",
-      headers: { "Idempotency-Key": "provider-a:win-1" },
+      headers: { "Idempotency-Key": `provider-a:${winId}` },
       body: JSON.stringify({
         providerId: "provider-a",
-        externalTransactionId: "win-1",
+        externalTransactionId: winId,
         playerId,
         walletId,
         roundId: "round-1",

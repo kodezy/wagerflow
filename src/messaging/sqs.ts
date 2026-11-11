@@ -19,7 +19,6 @@ export interface SqsDelivery {
   messageGroupId: string;
   sqsMessageId: string;
   body: string;
-  receiveCount: number;
 }
 
 export class SqsGateway {
@@ -42,7 +41,7 @@ export class SqsGateway {
         QueueUrl: queueUrl,
         MaxNumberOfMessages: 10,
         WaitTimeSeconds: waitSeconds,
-        MessageSystemAttributeNames: ["MessageGroupId", "ApproximateReceiveCount"],
+        MessageSystemAttributeNames: ["MessageGroupId"],
       }),
       { abortSignal: signal },
     );
@@ -56,7 +55,6 @@ export class SqsGateway {
           messageGroupId: message.Attributes?.MessageGroupId ?? "unparsed",
           sqsMessageId: message.MessageId,
           body: message.Body,
-          receiveCount: Number(message.Attributes?.ApproximateReceiveCount ?? 1),
         },
       ];
     });

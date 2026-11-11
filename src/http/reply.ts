@@ -22,7 +22,3 @@ export function outcomeStatus(outcome: WagerOutcome): number {
   if (outcome.status === WagerTransactionStatus.Failed) return 500;
   return 200;
 }
-
-export function outcomeBody(outcome: WagerOutcome): WagerOutcome {
-  return outcome;
-}

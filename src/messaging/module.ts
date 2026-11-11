@@ -23,11 +23,11 @@ export class MessagingRuntime implements OnApplicationBootstrap, BeforeApplicati
     @Inject(OutboxPublisher) private readonly publisher: OutboxPublisher,
     @Inject(PendingReferenceWorker) private readonly worker: PendingReferenceWorker,
   ) {
-    this.publisherLoop = new Loop("outbox", 500, async () => {
+    this.publisherLoop = new Loop(500, async () => {
       await this.publisher.publishDue();
       await this.publisher.measureLag();
     });
-    this.workerLoop = new Loop("pending-reference", 500, async () => {
+    this.workerLoop = new Loop(500, async () => {
       await this.worker.resumeDue();
     });
   }
