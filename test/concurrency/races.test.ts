@@ -9,6 +9,7 @@ import { Metrics } from "../../src/observability";
 import { ORM } from "../../src/persistence/module";
 import { CLOCK, systemClock } from "../../src/wagering/clock";
 import type { WagerOutcome } from "../../src/wagering/apply";
+import { FailureCode } from "../../src/wagering/errors";
 import { SubmitWager } from "../../src/wagering/submit";
 import { WagerTransactionStatus } from "../../src/wagering/transaction";
 import { expectLedgersMatch } from "../helpers/database";
@@ -135,8 +136,10 @@ describe("races", () => {
     const bodies = await Promise.all(responses.map(async (response) => (await response.json()) as WagerOutcome));
     const walletState = (await (await fetch(`${base}/wallets/${wallet.id}`)).json()) as WalletView;
     const statuses = bodies.map((body) => body.status).sort();
+    const rejected = bodies.find((body) => body.status === WagerTransactionStatus.Rejected);
 
     expect(statuses).toEqual([WagerTransactionStatus.Processed, WagerTransactionStatus.Rejected]);
+    expect(rejected?.failureCode).toBe(FailureCode.InsufficientBalance);
     expect(walletState.balance.amount).toBe("20.00");
   });
 

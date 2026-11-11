@@ -3,7 +3,7 @@ import type { MikroORM } from "@mikro-orm/postgresql";
 
 import { systemClock } from "../../src/wagering/clock";
 import { Metrics } from "../../src/observability";
-import { WagerConsumer } from "../../src/messaging/consumer";
+import { CONSUMER_NAME, WagerConsumer } from "../../src/messaging/consumer";
 import { OutboxPublisher } from "../../src/messaging/publisher";
 import { SqsGateway } from "../../src/messaging/sqs";
 import { PendingReferenceWorker } from "../../src/messaging/worker";
@@ -183,6 +183,8 @@ describe("WagerConsumer", () => {
 
   test("a crash before ack redelivers and the inbox keeps one debit", async () => {
     const wallet = await openWallet(store, systemClock);
+    const messageId = Bun.randomUUIDv7();
+    const body = requested(wallet, { money: { amount: "10.00", currency: "BRL" } }, messageId);
     const crashing = new Proxy(sqs, {
       get(target, property, receiver) {
         if (property === "delete") return async () => {
@@ -193,17 +195,21 @@ describe("WagerConsumer", () => {
     }) as SqsGateway;
 
     const first = consumer(crashing);
-    await sqs.sendWager(requested(wallet, { money: { amount: "10.00", currency: "BRL" } }), wallet.id, Bun.randomUUIDv7());
+    await sqs.sendWager(body, wallet.id, Bun.randomUUIDv7());
     first.start();
     await waitFor(async () => ((await store.findWallet(wallet.id))?.balance.toJSON().amount === "90.00" ? true : undefined));
+    const duplicatesBefore = await duplicateTotal(metrics);
     await first.stop();
 
     const second = consumer();
     second.start();
-    await Bun.sleep(2000);
+    await waitFor(async () => ((await duplicateTotal(metrics)) > duplicatesBefore ? true : undefined), 15_000, "inbox redelivery after visibility");
     await second.stop();
 
     expect((await store.findWallet(wallet.id))?.balance.toJSON().amount).toBe("90.00");
+    expect(await duplicateTotal(metrics)).toBeGreaterThan(duplicatesBefore);
+    expect(await inboxCount(messageId)).toBe(1);
+    expect(await debitCount(wallet.id)).toBe(1);
   });
 
   test("stop releases in-flight messages", async () => {
@@ -282,3 +288,30 @@ describe("PendingReferenceWorker", () => {
     expect(stored?.status).toBe(WagerTransactionStatus.Processed);
   });
 });
+
+async function inboxCount(messageId: string): Promise<number> {
+  const [row] = await sql<{ total: number }>(orm, "select count(*)::int as total from inbox_messages where consumer_name = ? and message_id = ?", [
+    CONSUMER_NAME,
+    messageId,
+  ]);
+  return row?.total ?? 0;
+}
+
+async function debitCount(walletId: string): Promise<number> {
+  const [row] = await sql<{ total: number }>(
+    orm,
+    "select count(*)::int as total from wallet_ledger_entries where wallet_id = ? and direction = 'DEBIT'",
+    [walletId],
+  );
+  return row?.total ?? 0;
+}
+
+async function duplicateTotal(metrics: Metrics): Promise<number> {
+  let sum = 0;
+  for (const line of (await metrics.registry.metrics()).split("\n")) {
+    const match = line.match(/^wagerflow_duplicates_total\{source="[^"]+"\} (\d+(?:\.\d+)?)$/);
+    if (match) sum += Number(match[1]);
+  }
+
+  return sum;
+}

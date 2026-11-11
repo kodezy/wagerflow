@@ -5,8 +5,9 @@ import { TEST_DATABASE_URL } from "./database";
 export type { QueueNames };
 
 export const SQS_ENDPOINT = process.env.SQS_ENDPOINT ?? "http://localhost:4566";
+export const TEST_QUEUE_VISIBILITY_SECONDS = 5;
 
-export async function testQueues(visibilityTimeout = 5): Promise<{ config: Config; sqs: SqsGateway; queues: QueueNames }> {
+export async function testQueues(visibilityTimeout = TEST_QUEUE_VISIBILITY_SECONDS): Promise<{ config: Config; sqs: SqsGateway; queues: QueueNames }> {
   const prefix = `t${Bun.randomUUIDv7().replaceAll("-", "").slice(0, 16)}-`;
   const base = loadConfig({
     ...process.env,
