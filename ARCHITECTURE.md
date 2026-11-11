@@ -330,7 +330,7 @@ Every test ends at `wallet.balance == fold(ledger)`.
 - No identity server in Compose. The guard is a no-op until an OIDC adapter is bound.
 - HTTP submit does not publish to `wager-transactions.fifo`. Producers and tests do.
 - No OpenTelemetry pipeline.
-- Load testing is outside this design. If added later, the entry is `bun run test:load`.
+- Load testing is an optional experiment, `bun run test:load`. It does not change the wager path. Method and one recorded run are in `docs/LOAD.md`.
 - Ready checks report reachability of PostgreSQL and SQS, not end-to-end wager success.
 
 ## Freshness

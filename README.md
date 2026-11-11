@@ -26,9 +26,10 @@ bun run test:unit
 bun run test:integration   # real PostgreSQL and MiniStack
 bun run test:concurrency
 bun test
+bun run test:load          # optional; Docker, three processes, writes wagerflow_load unless LOAD_DATABASE_URL is set
 ```
 
-Every integration and concurrency test checks that each wallet balance equals its ledger fold.
+Every integration and concurrency test checks that each wallet balance equals its ledger fold. The load script is not part of `bun test`. It prints throughput, client latency, error rate, lock timeouts, and outbox lag. Method and one recorded run: `docs/LOAD.md`.
 
 ## API
 
